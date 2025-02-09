@@ -20,15 +20,8 @@ const SORTED_BALANCE_TYPE_LIST = [
 export default {
   institutionIds: ['IntegrationBank'],
 
-  // EEA need to allow at least 180 days now but this doesn't apply to UK
-  // banks, and it's possible that there are EEA banks which still don't follow
-  // the new requirements. See:
-  // - https://nordigen.zendesk.com/hc/en-gb/articles/13239212055581-EEA-180-day-access
-  // - https://nordigen.zendesk.com/hc/en-gb/articles/6760902653085-Extended-history-and-continuous-access-edge-cases
-  accessValidForDays: 90,
-
   normalizeAccount(account) {
-    console.log(
+    console.debug(
       'Available account properties for new institution integration',
       { account: JSON.stringify(account) },
     );
@@ -38,10 +31,14 @@ export default {
       institution: account.institution,
       mask: (account?.iban || '0000').slice(-4),
       iban: account?.iban || null,
-      name: [account.name, printIban(account), account.currency]
+      name: [
+        account.name ?? account.displayName ?? account.product,
+        printIban(account),
+        account.currency,
+      ]
         .filter(Boolean)
         .join(' '),
-      official_name: `integration-${account.institution_id}`,
+      official_name: account.product ?? `integration-${account.institution_id}`,
       type: 'checking',
     };
   },
@@ -66,7 +63,7 @@ export default {
   },
 
   sortTransactions(transactions = []) {
-    console.log(
+    console.debug(
       'Available (first 10) transactions properties for new integration of institution in sortTransactions function',
       { top10Transactions: JSON.stringify(transactions.slice(0, 10)) },
     );
@@ -74,7 +71,7 @@ export default {
   },
 
   calculateStartingBalance(sortedTransactions = [], balances = []) {
-    console.log(
+    console.debug(
       'Available (first 10) transactions properties for new integration of institution in calculateStartingBalance function',
       {
         balances: JSON.stringify(balances),

@@ -1,10 +1,19 @@
 import fs from 'node:fs';
 import request from 'supertest';
 import { handlers as app } from './app-sync.js';
-import getAccountDb from './account-db.js';
 import { getPathForUserFile } from './util/paths.js';
+import getAccountDb from './account-db.js';
 import { SyncProtoBuf } from '@actual-app/crdt';
 import crypto from 'node:crypto';
+
+const ADMIN_ROLE = 'ADMIN';
+
+const createUser = (userId, userName, role, owner = 0, enabled = 1) => {
+  getAccountDb().mutate(
+    'INSERT INTO users (id, user_name, display_name, enabled, owner, role) VALUES (?, ?, ?, ?, ?, ?)',
+    [userId, userName, `${userName} display`, enabled, owner, role],
+  );
+};
 
 describe('/user-get-key', () => {
   it('returns 401 if the user is not authenticated', async () => {
@@ -25,8 +34,8 @@ describe('/user-get-key', () => {
     const encrypt_test = 'test-encrypt-test';
 
     getAccountDb().mutate(
-      'INSERT INTO files (id, encrypt_salt, encrypt_keyid, encrypt_test) VALUES (?, ?, ?, ?)',
-      [fileId, encrypt_salt, encrypt_keyid, encrypt_test],
+      'INSERT INTO files (id, encrypt_salt, encrypt_keyid, encrypt_test, owner) VALUES (?, ?, ?, ?, ?)',
+      [fileId, encrypt_salt, encrypt_keyid, encrypt_test, 'genericAdmin'],
     );
 
     const res = await request(app)
@@ -67,6 +76,54 @@ describe('/user-create-key', () => {
       status: 'error',
     });
   });
+
+  it('returns 400 if the file is not found', async () => {
+    const res = await request(app)
+      .post('/user-create-key')
+      .set('x-actual-token', 'valid-token')
+      .send({ fileId: 'non-existent-file-id' });
+
+    expect(res.statusCode).toEqual(400);
+    expect(res.text).toBe('file not found');
+  });
+
+  it('creates a new encryption key for the file', async () => {
+    const fileId = crypto.randomBytes(16).toString('hex');
+
+    const old_encrypt_salt = 'old-salt';
+    const old_encrypt_keyid = 'old-key';
+    const old_encrypt_test = 'old-encrypt-test';
+    const encrypt_salt = 'test-salt';
+    const encrypt_keyid = 'test-key-id';
+    const encrypt_test = 'test-encrypt-test';
+
+    getAccountDb().mutate(
+      'INSERT INTO files (id, encrypt_salt, encrypt_keyid, encrypt_test) VALUES (?, ?, ?, ?)',
+      [fileId, old_encrypt_salt, old_encrypt_keyid, old_encrypt_test],
+    );
+
+    const res = await request(app)
+      .post('/user-create-key')
+      .set('x-actual-token', 'valid-token')
+      .send({
+        fileId,
+        keyId: encrypt_keyid,
+        keySalt: encrypt_salt,
+        testContent: encrypt_test,
+      });
+
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toEqual({ status: 'ok' });
+
+    const rows = getAccountDb().all(
+      'SELECT encrypt_salt, encrypt_keyid, encrypt_test FROM files WHERE id = ?',
+      [fileId],
+    );
+
+    expect(rows[0].encrypt_salt).toEqual(encrypt_salt);
+    expect(rows[0].encrypt_keyid).toEqual(encrypt_keyid);
+    expect(rows[0].encrypt_test).toEqual(encrypt_test);
+  });
 });
 
 describe('/reset-user-file', () => {
@@ -87,8 +144,13 @@ describe('/reset-user-file', () => {
 
     // Use addMockFile to insert a mock file into the database
     getAccountDb().mutate(
-      'INSERT INTO files (id, group_id, deleted) VALUES (?, ?, FALSE)',
-      [fileId, groupId],
+      'INSERT INTO files (id, group_id, deleted, owner) VALUES (?, ?, FALSE, ?)',
+      [fileId, groupId, 'genericAdmin'],
+    );
+
+    getAccountDb().mutate(
+      'INSERT INTO user_access (file_id, user_id) VALUES (?, ?)',
+      [fileId, 'genericAdmin'],
     );
 
     const res = await request(app)
@@ -104,7 +166,7 @@ describe('/reset-user-file', () => {
       fileId,
     ]);
 
-    expect(rows[0].group_id).toBeNull;
+    expect(rows[0].group_id).toBeNull();
   });
 
   it('returns 400 if the file is not found', async () => {
@@ -470,6 +532,7 @@ describe('/list-user-files', () => {
   });
 
   it('returns a list of user files for an authenticated user', async () => {
+    createUser('fileListAdminId', 'admin', ADMIN_ROLE, 1);
     const fileId1 = crypto.randomBytes(16).toString('hex');
     const fileId2 = crypto.randomBytes(16).toString('hex');
     const fileName1 = 'file1.txt';
@@ -477,12 +540,12 @@ describe('/list-user-files', () => {
 
     // Insert mock files into the database
     getAccountDb().mutate(
-      'INSERT INTO files (id, name, deleted) VALUES (?, ?, FALSE)',
-      [fileId1, fileName1],
+      'INSERT INTO files (id, name, deleted, owner) VALUES (?, ?, FALSE, ?)',
+      [fileId1, fileName1, ''],
     );
     getAccountDb().mutate(
-      'INSERT INTO files (id, name, deleted) VALUES (?, ?, FALSE)',
-      [fileId2, fileName2],
+      'INSERT INTO files (id, name, deleted, owner) VALUES (?, ?, FALSE, ?)',
+      [fileId2, fileName2, ''],
     );
 
     const res = await request(app)
@@ -553,6 +616,7 @@ describe('/get-user-file-info', () => {
         groupId: fileInfo.group_id,
         name: fileInfo.name,
         encryptMeta: { key: 'value' },
+        usersWithAccess: [],
       },
     });
   });
@@ -782,8 +846,8 @@ describe('/sync', () => {
 
 function addMockFile(fileId, groupId, keyId, encryptMeta, syncVersion) {
   getAccountDb().mutate(
-    'INSERT INTO files (id, group_id, encrypt_keyid, encrypt_meta, sync_version) VALUES (?, ?, ?,?, ?)',
-    [fileId, groupId, keyId, encryptMeta, syncVersion],
+    'INSERT INTO files (id, group_id, encrypt_keyid, encrypt_meta, sync_version, owner) VALUES (?, ?, ?,?, ?, ?)',
+    [fileId, groupId, keyId, encryptMeta, syncVersion, 'genericAdmin'],
   );
 }
 
