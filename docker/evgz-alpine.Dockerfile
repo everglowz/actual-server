@@ -2,7 +2,7 @@
 # the local desktop client into the container. e.g.
 # actual-server> docker build -t evgz/actual-server -f docker/evgz-alpine.Dockerfile ..
 #
-FROM alpine:3.17 as base
+FROM alpine:3.18 AS base
 RUN apk add --no-cache nodejs yarn npm python3 openssl build-base
 WORKDIR /app
 ADD actual-server/.yarn ./.yarn
@@ -10,7 +10,7 @@ ADD actual-server/yarn.lock actual-server/package.json actual-server/.yarnrc.yml
 ADD actual/packages/desktop-client/ ../actual/packages/desktop-client/
 RUN yarn workspaces focus --all --production
 
-FROM alpine:3.17 as prod
+FROM alpine:3.18 as prod
 RUN apk add --no-cache nodejs tini
 
 ARG USERNAME=actual
